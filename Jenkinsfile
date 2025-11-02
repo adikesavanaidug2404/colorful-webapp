@@ -1,70 +1,65 @@
 pipeline {
     agent any
-
+    
     tools {
-        maven 'Maven3'
-        jdk 'Java17'
+        maven 'maven'
+        jdk 'java'
     }
-
+    
     environment {
-        AWS_DEFAULT_REGION = 'ap-south-1'
+        // Optional if you want to refer to your bucket/profile easily
         S3_BUCKET = 'my-war-artifacts-bucket'
-        DOCKER_IMAGE = 'colorful-webapp'
-        DOCKER_TAG = "latest"
+        AWS_PROFILE = 'aws-s3'
     }
 
     stages {
-        stage('Checkout') {
+        stage('Git Checkout') {
             steps {
-                git 'https://github.com/your-username/colorful-webapp.git'
+                git branch: 'main', url: 'https://github.com/adikesavanaidug2404/colorful-webapp.git'
             }
         }
-
-        stage('Build WAR') {
+        stage('Build War') {
             steps {
-                sh 'mvn clean package'
+                sh "mvn clean install"
             }
         }
-
-        stage('Build Docker Image') {
-            steps {
-                sh 'docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .'
-            }
-        }
-
-        stage('Push to Docker Hub') {
-            environment {
-                DOCKER_HUB_CREDENTIALS = credentials('dockerhub-creds') // Jenkins creds ID
-            }
-            steps {
-                sh '''
-                echo "${DOCKER_HUB_CREDENTIALS_PSW}" | docker login -u "${DOCKER_HUB_CREDENTIALS_USR}" --password-stdin
-                docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} yourdockerhubusername/${DOCKER_IMAGE}:${DOCKER_TAG}
-                docker push yourdockerhubusername/${DOCKER_IMAGE}:${DOCKER_TAG}
-                '''
-            }
-        }
-
         stage('Upload WAR to S3') {
             steps {
-                withAWS(credentials: 'aws-s3-credentials', region: "${AWS_DEFAULT_REGION}") {
+                script {
                     s3Upload(
-                        bucket: "${S3_BUCKET}",
-                        includePathPattern: 'target/*.war',
-                        workingDir: '.'
+                        consoleLogLevel: 'INFO',
+                        dontSetBuildResultOnFailure: false,
+                        dontWaitForConcurrentBuildCompletion: false,
+                        entries: [[
+                            bucket: "${S3_BUCKET}",
+                            excludedFile: '',
+                            flatten: false,
+                            gzipFiles: false,
+                            keepForever: false,
+                            managedArtifacts: false,
+                            noUploadOnFailure: false,
+                            selectedRegion: 'us-east-1',
+                            showDirectlyInBrowser: false,
+                            sourceFile: 'target/*.war',
+                            storageClass: 'STANDARD',
+                            uploadFromSlave: false,
+                            useServerSideEncryption: false
+                        ]],
+                        pluginFailureResultConstraint: 'SUCCESS',
+                        profileName: "${AWS_PROFILE}",
+                        userMetadata: []
                     )
                 }
             }
         }
+    }
 
-        stage('Run Container (Optional)') {
-            steps {
-                sh '''
-                docker stop colorful-webapp || true
-                docker rm colorful-webapp || true
-                docker run -d -p 8083:8083 --name colorful-webapp ${DOCKER_IMAGE}:${DOCKER_TAG}
-                '''
-            }
+    post {
+        success {
+            echo "✅ WAR file successfully uploaded to S3 bucket: ${S3_BUCKET}"
+        }
+        failure {
+            echo "❌ Build or upload failed!"
         }
     }
 }
